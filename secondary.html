@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EV NEXUS | Dhaka Network Command Center</title>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700&display=swap" rel="stylesheet">
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-database.js"></script>
+
+    <style>
+        :root {
+            --bg-deep: #05070a;
+            --surface: #0d1117;
+            --charge-accent: #00ff9d;
+            --wait-amber: #ffaa00;
+            --text-muted: #8b949e;
+            --glass-white: rgba(255, 255, 255, 0.05);
+        }
+
+        body {
+            background-color: var(--bg-deep);
+            color: #e6edf3;
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            margin: 0; padding: 25px;
+        }
+
+        .container { max-width: 1300px; margin: 0 auto; }
+
+        /* Summary Header */
+        header { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 40px; }
+        .network-title h1 { margin: 0; font-size: 1.8rem; letter-spacing: -1px; }
+        .network-title p { color: var(--charge-accent); margin: 5px 0 0; font-size: 0.8rem; font-weight: 700; text-transform: uppercase; }
+
+        .summary-stats { display: flex; gap: 20px; }
+        .stat-box { background: var(--surface); padding: 15px 25px; border-radius: 12px; border: 1px solid var(--glass-white); }
+        .stat-label { font-size: 0.65rem; text-transform: uppercase; color: var(--text-muted); font-weight: 700; margin-bottom: 5px; }
+        .stat-value { font-size: 1.5rem; font-weight: 700; color: #fff; }
+
+        /* Station Grid */
+        .station-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); gap: 25px; }
+        
+        .station-card {
+            background: var(--surface);
+            border-radius: 24px;
+            padding: 25px;
+            border: 1px solid var(--glass-white);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .location-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 25px; }
+        .station-name { font-size: 1.2rem; font-weight: 700; color: #fff; }
+        .location-sub { font-size: 0.75rem; color: var(--text-muted); display: block; margin-top: 4px; }
+        
+        /* Zonal Slots Layout */
+        .zonal-container { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        .zone { background: rgba(0,0,0,0.2); padding: 15px; border-radius: 16px; border: 1px solid var(--glass-white); }
+        .zone-label { font-size: 0.6rem; font-weight: 800; color: var(--text-muted); text-transform: uppercase; margin-bottom: 12px; display: block; text-align: center; }
+
+        .slots-row { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+        .wait-slots-row { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+
+        .slot {
+            background: #161b22;
+            padding: 12px;
+            border-radius: 12px;
+            text-align: center;
+            border: 1px solid transparent;
+            transition: 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        /* Logic Styles */
+        .charging-occupied { 
+            border-color: var(--charge-accent); 
+            background: rgba(0, 255, 157, 0.05); 
+            animation: pulse 2s infinite; 
+        }
+        .waiting-occupied { border-color: var(--wait-amber); background: rgba(255, 170, 0, 0.05); }
+
+        .slot-icon { font-size: 1.2rem; margin-bottom: 4px; display: block; opacity: 0.3; }
+        .occupied .slot-icon { opacity: 1; }
+        .slot-num { font-size: 0.65rem; font-weight: 700; color: var(--text-muted); }
+
+        @keyframes pulse { 0% { box-shadow: 0 0 0 0px rgba(0, 255, 157, 0.1); } 100% { box-shadow: 0 0 0 10px rgba(0, 255, 157, 0); } }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <header>
+        <div class="network-title">
+            <h1>EV NEXUS HUB</h1>
+            <p>Dhaka Regional Command Center</p>
+        </div>
+        <div class="summary-stats">
+            <div class="stat-box">
+                <div class="stat-label">Total Active Charging</div>
+                <div class="stat-value" id="global-charging" style="color: var(--charge-accent);">0</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-label">Total In-Queue</div>
+                <div class="stat-value" id="global-waiting" style="color: var(--wait-amber);">0</div>
+            </div>
+        </div>
+    </header>
+
+    <div class="station-grid" id="station-grid"></div>
+</div>
+
+<script>
+    const stationMap = {
+        ESP32_01: { name: "Station 01", location: "Basundhara R/A" },
+        ESP32_02: { name: "Station 02", location: "Rampura Main Road" },
+        ESP32_03: { name: "Station 03", location: "Satarkul (Near UIU)" },
+        ESP32_04: { name: "Station 04", location: "Natunbazar Intersection" }
+    };
+
+    const firebaseConfig = {
+        apiKey: "AIzaSyBBacn2C_AmruoHZcb3vmZIXysTQRPrvIk",
+        authDomain: "bd-ev-ch.firebaseapp.com",
+        databaseURL: "https://bd-ev-ch-default-rtdb.asia-southeast1.firebasedatabase.app",
+        projectId: "bd-ev-ch"
+    };
+
+    firebase.initializeApp(firebaseConfig);
+    const dbRef = firebase.database().ref("devices");
+
+    dbRef.on("value", (snapshot) => {
+        const data = snapshot.val();
+        render(data);
+    });
+
+    function render(devices) {
+        const grid = document.getElementById('station-grid');
+        grid.innerHTML = '';
+        let totalCharging = 0;
+        let totalWaiting = 0;
+
+        Object.keys(devices).forEach(devKey => {
+            const dev = devices[devKey];
+            const meta = stationMap[devKey] || { name: devKey, location: "Unknown" };
+            const card = document.createElement('div');
+            card.className = 'station-card';
+
+            let chargeZoneHtml = '';
+            let waitZoneHtml = '';
+
+            for(let i=1; i<=6; i++) {
+                const isOccupied = dev[`ir${i}`] === true;
+                const isChargeSlot = i <= 2;
+                
+                if(isOccupied) {
+                    if(isChargeSlot) totalCharging++;
+                    else totalWaiting++;
+                }
+
+                const slotHtml = `
+                    <div class="slot ${isOccupied ? (isChargeSlot ? 'charging-occupied occupied' : 'waiting-occupied occupied') : ''}">
+                        <span class="slot-icon">${isOccupied ? (isChargeSlot ? '⚡' : '🚗') : '○'}</span>
+                        <span class="slot-num">SLOT 0${i}</span>
+                    </div>
+                `;
+
+                if(isChargeSlot) chargeZoneHtml += slotHtml;
+                else waitZoneHtml += slotHtml;
+            }
+
+            card.innerHTML = `
+                <div class="location-header">
+                    <div>
+                        <span class="station-name">${meta.name}</span>
+                        <span class="location-sub">${meta.location}</span>
+                    </div>
+                    <span style="font-size: 0.55rem; color: var(--text-muted); font-weight: 700;">LIVE SYNC: ${dev.last_update}</span>
+                </div>
+                <div class="zonal-container">
+                    <div class="zone">
+                        <span class="zone-label">⚡ Charging Bay</span>
+                        <div class="slots-row">${chargeZoneHtml}</div>
+                    </div>
+                    <div class="zone">
+                        <span class="zone-label">🅿️ Waiting Pipeline</span>
+                        <div class="wait-slots-row">${waitZoneHtml}</div>
+                    </div>
+                </div>
+            `;
+            grid.appendChild(card);
+        });
+
+        document.getElementById('global-charging').textContent = totalCharging;
+        document.getElementById('global-waiting').textContent = totalWaiting;
+    }
+</script>
+</body>
+</html>

@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>EV NEXUS | Admin Control Center</title>
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-database.js"></script>
+    <style>
+        :root { --bg: #05070a; --card: #0d1117; --green: #00ff9d; --amber: #ffaa00; --red: #ff4d4d; --text: #e6edf3; }
+        body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', sans-serif; margin: 0; padding: 20px; }
+        .kpi-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 15px; margin-bottom: 25px; }
+        .kpi-card { background: var(--card); padding: 20px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.05); text-align: center; }
+        .kpi-card h2 { font-size: 2rem; margin: 5px 0 0; color: var(--green); }
+        .station-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(350px, 1fr)); gap: 20px; }
+        .station-card { background: var(--card); border-radius: 15px; padding: 20px; border: 1px solid rgba(255,255,255,0.05); position: relative; }
+        
+        /* Fire Alert Styling */
+        .fire-active { background: var(--red); color: white; padding: 10px; border-radius: 8px; font-weight: 800; text-align: center; margin-bottom: 12px; display: none; animation: flash 1s infinite; }
+        @keyframes flash { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
+
+        /* Slot Groups */
+        .group-label { font-size: 0.65rem; font-weight: 800; margin-bottom: 8px; color: var(--text); opacity: 0.6; text-transform: uppercase; }
+        .zone { background: rgba(0,0,0,0.15); padding: 12px; border-radius: 10px; margin-bottom: 15px; border: 1px solid rgba(255,255,255,0.03); }
+        .slot-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+        .slot { background: #161b22; padding: 10px; border-radius: 6px; text-align: center; font-size: 0.75rem; border: 1px solid transparent; }
+        .active-charge { border-color: var(--green); color: var(--green); font-weight: 700; }
+        .active-wait { border-color: var(--amber); color: var(--amber); }
+
+        /* Controls */
+        .controls { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+        .btn { padding: 10px; border-radius: 8px; border: none; font-weight: 700; cursor: pointer; transition: 0.2s; font-size: 0.75rem; }
+        .btn-green { background: #238636; color: white; }
+        .btn-red { background: var(--red); color: white; }
+        .btn-dim { background: #30363d; opacity: 0.5; color: #8b949e; }
+    </style>
+</head>
+<body>
+
+<div class="kpi-row">
+    <div class="kpi-card"><div>NETWORK DAILY CHARGES</div><h2 id="total-charged">0</h2></div>
+    <div class="kpi-card"><div>LIVE SESSIONS</div><h2 id="current-active">0</h2></div>
+    <div class="kpi-card"><div>STATIONS</div><h2>4</h2></div>
+</div>
+
+<div class="station-grid" id="main-grid"></div>
+
+<script>
+    const stationMeta = {
+        "ESP32_01": { name: "Station 01", loc: "Basundhara" },
+        "ESP32_02": { name: "Station 02", loc: "Rampura" },
+        "ESP32_03": { name: "Station 03", loc: "Satarkul" },
+        "ESP32_04": { name: "Station 04", loc: "Natunbazar" }
+    };
+
+    const sessionTimers = {}; 
+    let globalCarCounter = 0;
+
+    firebase.initializeApp({
+        apiKey: "AIzaSyBBacn2C_AmruoHZcb3vmZIXysTQRPrvIk",
+        databaseURL: "https://bd-ev-ch-default-rtdb.asia-southeast1.firebasedatabase.app",
+    });
+    const db = firebase.database();
+
+    function updateHw(id, key, val) { db.ref(`devices/${id}/${key}`).set(val); }
+
+    db.ref("devices").on("value", (snap) => {
+        const data = snap.val();
+        const grid = document.getElementById('main-grid');
+        grid.innerHTML = '';
+        let liveCount = 0;
+
+        Object.keys(data).forEach(id => {
+            if (!stationMeta[id]) return;
+            const dev = data[id];
+            let chargeHtml = '';
+            let waitHtml = '';
+
+            for(let i=1; i<=6; i++) {
+                const occupied = dev[`ir${i}`] === true;
+                const sid = `${id}_${i}`;
+                if (i <= 2) { // Charging Slots
+                    if (occupied) {
+                        liveCount++;
+                        if(!sessionTimers[sid]) sessionTimers[sid] = Date.now();
+                        const dur = Math.floor((Date.now() - sessionTimers[sid]) / 60000);
+                        chargeHtml += `<div class="slot active-charge">⚡ Slot ${i} (${dur}m)</div>`;
+                    } else {
+                        if(sessionTimers[sid]) { globalCarCounter++; delete sessionTimers[sid]; }
+                        chargeHtml += `<div class="slot">○ Slot ${i}</div>`;
+                    }
+                } else { // Waiting Slots
+                    waitHtml += `<div class="slot ${occupied ? 'active-wait' : ''}">${occupied ? '🚗' : '○'} Slot ${i}</div>`;
+                }
+            }
+
+            const card = document.createElement('div');
+            card.className = 'station-card';
+            card.innerHTML = `
+                <div class="fire-active" style="display: ${dev.flame_detected ? 'block' : 'none'}">🔥 FIRE ACTIVE: EMERGENCY</div>
+                <div style="display:flex; justify-content:space-between; margin-bottom:15px">
+                    <h3 style="margin:0">${stationMeta[id].name}</h3>
+                    <span style="font-size:0.7rem; color:var(--text); opacity:0.5">${stationMeta[id].loc}</span>
+                </div>
+                <div class="zone">
+                    <div class="group-label">Charging Bay</div>
+                    <div class="slot-grid">${chargeHtml}</div>
+                </div>
+                <div class="zone">
+                    <div class="group-label">Waiting Pipeline</div>
+                    <div class="slot-grid">${waitHtml}</div>
+                </div>
+                <div class="controls">
+                    <button class="btn ${dev.Sensor ? 'btn-green' : 'btn-dim'}" onclick="updateHw('${id}','Sensor',${dev.Sensor?0:1})">LED: ${dev.Sensor?'ON':'OFF'}</button>
+                    <button class="btn ${dev.Shutdown ? 'btn-green' : 'btn-dim'}" onclick="updateHw('${id}','Shutdown',${dev.Shutdown?0:1})">STATUS: ${dev.Shutdown?'RUN':'OFF'}</button>
+                </div>`;
+            grid.appendChild(card);
+        });
+        document.getElementById('current-active').innerText = liveCount;
+        document.getElementById('total-charged').innerText = globalCarCounter;
+    });
+</script>
+</body>
+</html>
